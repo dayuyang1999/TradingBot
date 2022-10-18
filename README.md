@@ -4,7 +4,7 @@
 
 # To-dos
 
-- support aftermarket data and merge it to `yfinance`
+- support aftermarket data
 
 
 # TradingBot
