@@ -1,0 +1,23 @@
+Metadata-Version: 2.1
+Name: TradingBot
+Version: 0.1.0
+Summary: A Python toolkit for strategy design, backtesting, and algorithm trading
+Home-page: https://github.com/dayuyang1999/TradingBot
+Download-URL: https://pypi.org/project/TradingBot
+Author: Dayu Yang
+Author-email: dayu@udel.edu
+License: MIT
+Keywords: Stock,Trading
+Description-Content-Type: text/markdown
+
+TradingBot is a Python module for algorithm trading. It provides effective, reproducible, universal, and easy-to-use algorithm trading experience.
+
+# Installation
+
+Install via Python development installation:
+
+```
+git clone git@github.com:dayuyang1999/TradingBot.git
+cd TradingBot
+pip install e
+```
