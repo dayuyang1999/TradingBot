@@ -9,12 +9,12 @@
 - 2022-10-24: 
   - change momentum signal from absolute value to percentage (also change the threshold settings)
   - update the momemtum trading pattern: the previous position will effect the currect trading decision.
-
+  - support aftermarket data
 
 
 # To-dos
 
-- support aftermarket data
+
 - support robinhood API
 - support Deep Learning methods
   - LSTM and Transformers will be top try-outs
