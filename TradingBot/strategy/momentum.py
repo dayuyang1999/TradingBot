@@ -35,7 +35,7 @@ class Momentum(Strategy):
     '''
     ema enhanced momentum strategy
     '''
-    def __init__(self, signal_df, momemtum_settings, verbose=False):
+    def __init__(self, signal_df, momentum_settings, verbose=False, time_restrictive = False):
         '''
         Purpose:
             input data, output signal(long? short? empty?) to the corresponding **time period** 
@@ -54,17 +54,18 @@ class Momentum(Strategy):
         '''
         
         super().__init__('momentum')
-        self.time_restrictive = False
+        self.time_restrictive = time_restrictive
         self.signal_df = signal_df
-        self.momemtum_settings = momemtum_settings
+        self.momentum_settings = momentum_settings
         self.verbose = verbose
         
         ####### main process
         # create long term indicator
-        self.signal_df['ema']  = self.long_term_momentum()
+        self.long_term_momentum()
+        #self.signal_df['ema']  = self.long_term_momentum()
         # create short term momentum 
         
-        self.compute_momentum(self.momemtum_settings.fast_smooth_factor) ## will add new col: smoothed_pct_change
+        self.compute_momentum(self.momentum_settings.fast_smooth_factor) ## will add new col: smoothed_pct_change
 
         
         # create signal
@@ -99,7 +100,7 @@ class Momentum(Strategy):
 
         ax.plot(self.signal_df['price'], label="signal price")
         #if emas != None:
-        ax.plot(self.signal_df['ema'], label=f'ema{self.momemtum_settings.slow_smooth_factor} of signal price')
+        ax.plot(self.signal_df['ema'], label=f'ema{self.momentum_settings.slow_smooth_factor} of signal price')
         # print long
         ax.vlines(x= np.array(self.signal_df[self.signal_df['signal'] == 'long'].index), 
                   ymin=np.min(self.signal_df['price']), 
@@ -129,7 +130,8 @@ class Momentum(Strategy):
         '''
         use ema20 as default for minites trade
         '''
-        return ema(self.signal_df['price'], self.momemtum_settings.slow_smooth_factor)
+        #return ema(self.signal_df['price'], self.momentum_settings.slow_smooth_factor)
+        self.signal_df['ema'] = self.signal_df['price'].ewm(span=self.momentum_settings.slow_smooth_factor, min_periods=self.momentum_settings.slow_smooth_factor).mean()
     
     
     def compute_momentum(self, dif_sf, focal_row_nums=[]):
@@ -140,15 +142,15 @@ class Momentum(Strategy):
             - 1st differential is related to the abosolute index value
             - so divided by index value  / self.prices[-1]
         '''
-        #self.signal_df['smoothed_dif'] = self.signal_df['price'].diff().ewm(span=self.momemtum_settings.fast_smooth_factor, min_periods=self.momemtum_settings.fast_smooth_factor).mean()
-        self.signal_df['smoothed_pct_change'] = self.signal_df['pct_change'].ewm(span=self.momemtum_settings.fast_smooth_factor, min_periods=1).mean()
+        #self.signal_df['smoothed_dif'] = self.signal_df['price'].diff().ewm(span=self.momentum_settings.fast_smooth_factor, min_periods=self.momentum_settings.fast_smooth_factor).mean()
+        self.signal_df['smoothed_pct_change'] = self.signal_df['pct_change'].ewm(span=self.momentum_settings.fast_smooth_factor, min_periods=self.momentum_settings.fast_smooth_factor).mean()
         
         
         ma_dif = np.nan_to_num(self.signal_df['smoothed_pct_change'].values, nan=0)
         #assert len(dif_ma) == self.signal_df.shape[0] - 1
         
-        # self.buy_lower_thres, self.buy_upper_thres = self.obtain_filer_boundary(self.momemtum_settings.buy_thres, ma_dif)
-        # self.sell_lower_thres, self.sell_upper_thres = self.obtain_filer_boundary(self.momemtum_settings.sell_thres, ma_dif)
+        # self.buy_lower_thres, self.buy_upper_thres = self.obtain_filer_boundary(self.momentum_settings.buy_thres, ma_dif)
+        # self.sell_lower_thres, self.sell_upper_thres = self.obtain_filer_boundary(self.momentum_settings.sell_thres, ma_dif)
 
         if self.verbose:
             
@@ -169,9 +171,9 @@ class Momentum(Strategy):
             for focal_row_num in focal_row_nums:
                 ax.vlines(ymin=np.min(ma_dif), ymax=np.max(ma_dif), x=focal_row_num, color='r', linestyle='-.')
         
-            ax.axhline(self.momemtum_settings.long_buy_thres/100, linestyle='--', c='g', label='buy long thres')
-            ax.axhline(-self.momemtum_settings.short_buy_thres/100, linestyle='--', c='g', label='buy short thres')
-            ax.plot(ma_dif, label=f"MA {self.momemtum_settings.fast_smooth_factor} of percentage change: denoised(smoothed) divergence")
+            ax.axhline(self.momentum_settings.long_buy_thres/100, linestyle='--', c='g', label='buy long thres')
+            ax.axhline(-self.momentum_settings.short_buy_thres/100, linestyle='--', c='g', label='buy short thres')
+            ax.plot(ma_dif, label=f"MA {self.momentum_settings.fast_smooth_factor} of percentage change: denoised(smoothed) divergence")
 
             #ax.plot(ema_ema, label="EMA of EMA")
             #ax.plot(macd, label="macd")
@@ -203,35 +205,60 @@ class Momentum(Strategy):
             
             
             if not self.time_restrictive:
-                if dif == np.nan: 
+                if (pct_change == np.nan) or (ema == np.nan): 
                     cur_sig = 'empty'
                 else:
                     if previous_state != 'empty': # hold in prev state
                         if previous_state == 'short': # if prev short
-                            if (pct_change*100 > self.momemtum_settings.long_buy_thres) and (price > ema):
+                            if (pct_change*100 > self.momentum_settings.long_buy_thres) and (price > ema):
                                 cur_sig = 'long' # reverse
-                            elif pct_change*100 > - self.momemtum_settings.short_sell_thres: # -1 > -2
+                            elif pct_change*100 > - self.momentum_settings.short_sell_thres: # -1 > -2
                                 cur_sig = 'empty'
                             else:
                                 cur_sig = previous_state
                         elif previous_state == 'long':
-                            if (pct_change*100 < - self.momemtum_settings.short_buy_thres) and (price < ema): # reverse
+                            if (pct_change*100 < - self.momentum_settings.short_buy_thres) and (price < ema): # reverse
                                 cur_sig = 'short'
-                            elif pct_change*100 < self.momemtum_settings.long_sell_thres: # sell
+                            elif pct_change*100 < self.momentum_settings.long_sell_thres: # sell
                                 cur_sig = 'empty'
                             else:
                                 cur_sig = previous_state
                     
                     else: # prev is empty
-                        if (pct_change*100 > self.momemtum_settings.long_buy_thres) and (price > ema): # large enough to long
+                        if (pct_change*100 > self.momentum_settings.long_buy_thres) and (price > ema): # large enough to long
                             cur_sig = 'long'
-                        elif (pct_change*100 < - self.momemtum_settings.short_buy_thres) and (price < ema):
+                        elif (pct_change*100 < - self.momentum_settings.short_buy_thres) and (price < ema):
                             cur_sig = 'short'
                         else:
                             cur_sig = 'empty'
                     
-            else:
-                pass
+            else: # if time restrictive
+                if (dif == np.nan) or ((int(time.strftime('%H')) in self.momentum_settings.restrictive_hours)): 
+                    cur_sig = 'empty'
+                else:
+                    if previous_state != 'empty': # hold in prev state
+                        if previous_state == 'short': # if prev short
+                            if (pct_change*100 > self.momentum_settings.long_buy_thres) and (price > ema):
+                                cur_sig = 'long' # reverse
+                            elif pct_change*100 > - self.momentum_settings.short_sell_thres: # -1 > -2
+                                cur_sig = 'empty'
+                            else:
+                                cur_sig = previous_state
+                        elif previous_state == 'long':
+                            if (pct_change*100 < - self.momentum_settings.short_buy_thres) and (price < ema): # reverse
+                                cur_sig = 'short'
+                            elif pct_change*100 < self.momentum_settings.long_sell_thres: # sell
+                                cur_sig = 'empty'
+                            else:
+                                cur_sig = previous_state
+                    
+                    else: # prev is empty
+                        if (pct_change*100 > self.momentum_settings.long_buy_thres) and (price > ema): # large enough to long
+                            cur_sig = 'long'
+                        elif (pct_change*100 < - self.momentum_settings.short_buy_thres) and (price < ema):
+                            cur_sig = 'short'
+                        else:
+                            cur_sig = 'empty'
                 
                 
             
@@ -299,7 +326,7 @@ class Momentum(Strategy):
         #             long.append(1)
         #             short.append(0)
         #             empty.append(0)
-        #         elif value < - self.momemtum_settings.short_buy_thres: # buy short
+        #         elif value < - self.momentum_settings.short_buy_thres: # buy short
         #             long.append(0)
         #             short.append(1)
         #             empty.append(0)
@@ -309,8 +336,8 @@ class Momentum(Strategy):
         #             empty.append(1)
         #     else: # when time >0, obtain prev status and consider current operation
         #         if long[i-1] == 1: # if prev hold long, consider when to sell long
-        #             if value < self.momemtum_settings.long_sell_thres: # if <= long_sell_thres, sell
-        #                 if value < - self.momemtum_settings.short_buy_thres: # if buy short instead? < -thres
+        #             if value < self.momentum_settings.long_sell_thres: # if <= long_sell_thres, sell
+        #                 if value < - self.momentum_settings.short_buy_thres: # if buy short instead? < -thres
         #                     long.append(0)
         #                     short.append(1)
         #                     empty.append(0)
@@ -324,7 +351,7 @@ class Momentum(Strategy):
         #                 empty.append(0)
                         
         #         elif short[i-1] == 1: # if prev hold short
-        #             if value > - self.momemtum_settings.short_sell_thres: # sell short
+        #             if value > - self.momentum_settings.short_sell_thres: # sell short
         #                 if value > self.upper_thres: # buy long instead?
         #                     long.append(1)
         #                     short.append(0)

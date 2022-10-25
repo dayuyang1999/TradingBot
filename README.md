@@ -6,6 +6,8 @@
 
 # Recent Updates Log
 
+- 2022-10-25:
+  - support restrictive hours
 - 2022-10-24: 
   - change momentum signal from absolute value to percentage (also change the threshold settings)
   - update the momemtum trading pattern: the previous position will effect the currect trading decision.
@@ -64,6 +66,11 @@ Scripts you need to build:
 ## Data
 
 Data with minimum delay is the first prerequisite for trading on stock market. So far, I have tried [Alpaca](https://github.com/alpacahq/alpaca-trade-api-py) and [YahooFinance](https://github.com/ranaroussi/yfinance). Eventually I decided to use `yfinance`.
+
+
+### Extended Hours
+
+We may not trade in extended hours (since extended hours are not quite likely to have large momentum if using momentum-series of indicator), but we definitely need data from extended hours.
 
 ### Understanding data of `yfinance`
 

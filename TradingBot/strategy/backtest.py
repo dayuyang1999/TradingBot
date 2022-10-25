@@ -19,8 +19,8 @@ import pandas as pd
 
 
 class APISettings:
-    API_KEY_ID = "yours"
-    SECRET_KEY = "yours"
+    API_KEY_ID = "your"
+    SECRET_KEY = "your"
     ENDPOINT = 'https://paper-api.alpaca.markets'
 
 
@@ -34,10 +34,10 @@ class RollingBackTest():
     # '''
     def __init__(self, momentum_settings, api_setting:APISettings(), test_strategy:str, start_testing_date, testing_length, 
                  signal_ticker, long_ticker, short_ticker,
-                 data_interval, gap, verbose, skip_morning):
+                 data_interval, gap, verbose, time_restrictive):
         
         self.start_testing_date = start_testing_date
-        self.skip_morning = skip_morning
+        self.time_restrictive = time_restrictive
         self.testing_length = testing_length
         self.gap = gap
         self.test_strategy = test_strategy
@@ -64,7 +64,7 @@ class RollingBackTest():
         rets_noncomp = []
         total_sucs = []
         for start_date, end_date in tqdm(zip(start_dates, end_dates), total=len(end_dates)):
-            backtest = BackTest(self.test_strategy, self.momentum_settings, start_date, end_date, self.signal_ticker, self.long_ticker, self.short_ticker, self.data_interval, verbose=self.verbose)
+            backtest = BackTest(self.test_strategy, self.momentum_settings, start_date, end_date, self.signal_ticker, self.long_ticker, self.short_ticker, self.data_interval, verbose=self.verbose, time_restrictive=self.time_restrictive)
             test_returns.append(backtest.return_total)
             long_returns.append(backtest.return_long)
             short_returns.append(backtest.return_short)
@@ -114,7 +114,7 @@ class RollingBackTest():
     
 
 class BackTest:
-    def __init__(self, test_strategy, momentum_settings, start_date, end_date, signal_ticker, long_ticker, short_ticker, data_inverval, which='Open', verbose=True, premarket=False):
+    def __init__(self, test_strategy, momentum_settings, start_date, end_date, signal_ticker, long_ticker, short_ticker, data_inverval, which='Open', verbose=True, premarket=False, time_restrictive=False):
         '''
         date format like '2022-05-04'
         
@@ -161,7 +161,7 @@ class BackTest:
         
         # get signal
         if test_strategy == 'momentum':
-            self.momentum = Momentum(self.signal_df, momentum_settings, verbose)
+            self.momentum = Momentum(self.signal_df, momentum_settings, verbose, time_restrictive)
         
         # converting signal to vector 
         self.signal_df = self.momentum.signal_df # update

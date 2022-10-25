@@ -3,6 +3,8 @@ SECRET_KEY = "yours"
 ENDPOINT = 'https://paper-api.alpaca.markets'
 
 
+
+
 # document of alpaca api: https://github.com/alpacahq/alpaca-trade-api-python
 # transaction cost: https://www.webull.com/pricing
 
@@ -17,10 +19,10 @@ from datetime import datetime, timedelta
 from pytz import timezone
 
 
-from strategy.momentum import Momentum
+from TradingBot.strategy.momentum import Momentum
 import yfinance as yf
-from utils.tradebot import RD, EMA
-from utils.data import get_data
+from TradingBot.utils.tradebot import RD, EMA
+from TradingBot.utils.data import get_data
 
 
 
@@ -125,6 +127,8 @@ def full_buy(focal_ticker, bp_portion):
     Attention: Buying power is fluctuating since equity value fluctuate
     '''
     bp = float(api.get_account().buying_power)
+    notional = bp*bp_portion
+    print(notional, bp)
     # get_qty
     # try:
     #     old_qty = float(api.get_position(focal_ticker).qty)
@@ -134,7 +138,7 @@ def full_buy(focal_ticker, bp_portion):
         start_time = time.time()
         api.submit_order(
             symbol=focal_ticker,
-            notional = bp*bp_portion, # sometimes 
+            notional=notional, # sometimes 
             side='buy',
             type='market',
             time_in_force='day'
@@ -256,23 +260,6 @@ def my_submit_order(sig, long_ticker,  short_ticker, bp_portion):
     
     
 
-# def get_data(tiker='^IXIC', start="2022-05-05", which='Close', interval='1m'):
-#     '''
-#     # Valid periods: 1d,5d,1mo,3mo,6mo,1y,2y,5y,10y,ytd,max
-#     # Valid intervals: 1m,2m,5m,15m,30m,60m,90m,1h,1d,5d,1wk,1mo,3mo
-#     # see https://github.com/ranaroussi/yfinance/blob/9eef951acc70121e65825ad25e7afd2edd4c3e4b/yfinance/multi.py
-#     '''
-#     def reformulate_date(df):
-#         df.columns = df.columns.map(''.join)
-#         df = df.rename_axis('Date').reset_index()
-#         return df
-#     data = yf.download(tickers = tiker, start=start, interval = interval, progress=False)
-#     #data['pct_change'] = data[which].pct_change()
-#     #data['log_ret'] = np.log(data[which]) - np.log(data[which].shift(1))
-#     data = reformulate_date(data)
-#     #print("most recent date is ", data.iloc[-1, 0])
-#     return data
-
 
 
 def convertdata_yfinance(yfi_data):
@@ -285,10 +272,31 @@ def convertdata_yfinance(yfi_data):
     
     yfi_data['time'] = yfi_data.apply(lambda row: convert_time(row), axis=1)
     yfi_data.rename(columns={'Close':'price'}, inplace=True)
-    return yfi_data[['time', 'price']]
+    return yfi_data[['time', 'price', 'pct_change']]
 
+####
+# 
+#
+#
+#
+#
+########
+# 
+#
+#
+#
+#
+####
 
-def daily(trade_freq = '1m', signal_ticker='^IXIC', long_ticker='TQQQ', short_ticker='SQQQ', bp_portion=1/2):
+def daily(trade_freq, signal_ticker, long_ticker, short_ticker, bp_portion, trade_extended_hour: bool):
+    '''
+    Intro:
+        - should stay in this function during the trading hours
+        - once enter the `daily` function, it will only get out once the time is ended or any security wall has been triggered
+    
+    
+    
+    '''
     # check account status
     account = api.get_account()
     assert account.status == 'ACTIVE'
@@ -296,19 +304,33 @@ def daily(trade_freq = '1m', signal_ticker='^IXIC', long_ticker='TQQQ', short_ti
     #now = datetime.today().astimezone(nyc)
     today_str = datetime.today()+ timedelta(1)
     today_str = today_str.astimezone(nyc).strftime('%Y-%m-%d')
-    # get market open/close datetime 
-    market_open = now.replace(
-        hour=calendar.open.hour,
-        minute=calendar.open.minute,
-        second=0
-    )
-    market_open = market_open.astimezone(nyc)
-    market_close = now.replace(
-        hour=calendar.close.hour,
-        minute=calendar.close.minute,
-        second=0
-    )
-    market_close = market_close.astimezone(nyc)
+    if trade_extended_hour:
+        market_open = now.replace(
+            hour=4,
+            minute=0,
+            second=0
+        )
+        market_open = market_open.astimezone(nyc)   
+        market_close = now.replace(
+            hour=20,
+            minute=0,
+            second=0
+        )
+        market_close = market_close.astimezone(nyc)
+    else:
+        # get market open/close datetime 
+        market_open = now.replace(
+            hour=calendar.open.hour,
+            minute=calendar.open.minute,
+            second=0
+        )
+        market_open = market_open.astimezone(nyc)
+        market_close = now.replace(
+            hour=calendar.close.hour,
+            minute=calendar.close.minute,
+            second=0
+        )
+        market_close = market_close.astimezone(nyc)
     # get current datetime
     #current_dt = datetime.today().astimezone(nyc)
     # how much the time has pass since market open
@@ -318,12 +340,14 @@ def daily(trade_freq = '1m', signal_ticker='^IXIC', long_ticker='TQQQ', short_ti
     if trade_freq == '1m':
         seconds_per_turn = 60
         time_delta = 5
-    if trade_freq == '2m':
-        seconds_per_turn = 120
+    if trade_freq == '5m':
+        seconds_per_turn = 60*5
         time_delta = 5
     if trade_freq == '1h':
         seconds_per_turn = 60*60
         time_delta = 100
+        
+        
     # today's start buying power
     daily_start_all_value = float(api.get_account().equity)
     old_length_of_price = 0
@@ -338,10 +362,10 @@ def daily(trade_freq = '1m', signal_ticker='^IXIC', long_ticker='TQQQ', short_ti
         
         while True:
             try:
-                days_before = datetime.today() - timedelta(time_delta) # 3 for ...weekend
-                data_start_date = days_before.astimezone(nyc).strftime('%Y-%m-%d') # to make sure ema is good enough
-                df = get_data(tiker=signal_ticker, start = data_start_date, end=today_str, which='Close', interval=trade_freq)
-                df = df[:-1] # remove the last line (its the varying live price)
+                days_before = datetime.today() - timedelta(time_delta) # 5 
+                data_start_date = days_before.astimezone(nyc).strftime('%Y-%m-%d') # to make sure EMA is good enough, need to trace back at least `fast_smooth_factor` datapoints
+                df = get_data(tiker=signal_ticker, start = data_start_date, end=today_str, which='Close', interval=trade_freq, premarket=True)
+                df = df[:-1] # remove the last line (its the varying live price, see introduction of yfinance data in README)
                 length_of_price = df.shape[0]
                 lastdata_timestamp = df.iloc[-1, 0]
                 break
@@ -355,12 +379,11 @@ def daily(trade_freq = '1m', signal_ticker='^IXIC', long_ticker='TQQQ', short_ti
             # formulate df 
             new_df = convertdata_yfinance(df)
             # get current signal
-            momentum = Momentum(new_df, Momentum_settings(), False, False)
+            momentum = Momentum(signal_df=new_df, momentum_settings=Momentum_settings(), verbose=False, time_restrictive=True)
             sigs = momentum.signal_df['signal'].values[-1] # a string
 
     
             my_submit_order(sigs, long_ticker, short_ticker, bp_portion)
-
             old_length_of_price = length_of_price
             time.sleep(0.5)
         
@@ -369,8 +392,9 @@ def daily(trade_freq = '1m', signal_ticker='^IXIC', long_ticker='TQQQ', short_ti
         remain_market_open = market_close - current_dt
         remain_market_open = remain_market_open.total_seconds()
         
+        ##### Security Wall ##### 
         
-        ##### once 
+        ##### time out
         #print('remain trade time today:', remain_market_open.seconds)
         if remain_market_open <= 20:
             sell_everything()
@@ -379,18 +403,18 @@ def daily(trade_freq = '1m', signal_ticker='^IXIC', long_ticker='TQQQ', short_ti
             break
         
         
-        ##### Loss Security Wall ##### 
+        ##### Loss
         # once loss 10%, stop trading today
         all_value = float(api.get_account().equity)
         if all_value/daily_start_all_value < (1-0.1): # max loss = 10%
             break
  
         
+        ############################
         
+        #### time helper
         if (suspend_secs - (time.time() - start_time)) > 0:
             time.sleep(suspend_secs - (time.time() - start_time)) # make sure suspend 5 seconds 
-        # Todo: this may not be good. Since purchasing and selling take extra time. This should be less than 60 seconds.
-
 
 
 
@@ -405,31 +429,56 @@ def daily(trade_freq = '1m', signal_ticker='^IXIC', long_ticker='TQQQ', short_ti
 #
 #
 ####
+####
+# 
+#
+#
+#
+#
+####
     
 class Momentum_settings:
     '''
     if you found it is more likely to enter "long stage"
         - you should set higher threshold for short, but lower threshold for long
     '''
-    long_buy_thres = 1
-    long_sell_thres = 2
-    short_buy_thres = 1
-    short_sell_thres = 2
-    ema_smooth_factor = 30 # long-term indicator as ema smooth factor
+    long_buy_thres = 0.0
+    long_sell_thres = 0.0
+    short_buy_thres = 0.0
+    short_sell_thres = 0.0
+    slow_smooth_factor = 200
+    # long-term indicator as ema smooth factor
     # if larger, slower track of current price, more consistent
-    dif_smooth_factor = 5 # price smooth factor for computing momentum
+    fast_smooth_factor = 12 # price smooth factor for computing momentum
+    #restrictive_hours = [4, 5, 6 ,7, 8, 17, 18, 19, 20]
+    restrictive_hours = [4]
+    restrictive_mins = []
+
     
+####
+# 
+#
+#
+#
+#
+########
+# 
+#
+#
+#
+#
+####
 
 if __name__ == '__main__':
     api = REST(API_KEY_ID, SECRET_KEY, ENDPOINT)
     
     # hyperparam
-    trade_freq = '1m' # change this 
+    trade_freq = '5m' # change this 
+    signal_ticker = 'TQQQ'
     long_ticker = 'TQQQ'
     short_ticker = 'SQQQ'
-    # stop_after_open = 0
-    # stop_before_close = 0 # 2 * trade_freq
     bp_portion = 1/4
+    trading_extended_hour = True
     
     
     
@@ -440,6 +489,8 @@ if __name__ == '__main__':
     
     if trade_freq == '1m':
         seconds_per_turn = 60
+    if trade_freq == '5m':
+        seconds_per_turn = 60*5
     if trade_freq == '15m':
         seconds_per_turn = 60*15
     if trade_freq == '1h':
@@ -448,15 +499,18 @@ if __name__ == '__main__':
     while True:
         '''
         end trading at 16:05
-        start trading at 09:25
+        start trading at 04:59
         '''
         nyc = timezone('America/New_York')
         now = datetime.today().astimezone(nyc)
         today_str = datetime.today().astimezone(nyc).strftime('%Y-%m-%d')
+        
         # if today is a trading day.. return today
         calendar = api.get_calendar(start=today_str, end=today_str)[0] # get the next closet trading day 
+        
         # judge if today is a trading day
         is_today_tradingday = (today_str == datetime.strptime(str(calendar.date), '%Y-%m-%d %H:%M:%S').strftime('%Y-%m-%d'))
+        
         # get market open/close datetime 
         market_open_time = now.replace(
             hour=calendar.open.hour,
@@ -470,18 +524,42 @@ if __name__ == '__main__':
             second=0
         )
         market_close_time = market_close_time.astimezone(nyc)
-        # how much the time has pass since market open
-        since_market_open = now - market_open_time # seconds
-        since_market_open = since_market_open.total_seconds()
-        # how much the time remain before market close
-        remain_market_open = market_close_time - now # seconds
-        remain_market_open = remain_market_open.total_seconds()
+        
+        # get extended time
+        extended_market_open_time =  now.replace(
+            hour=4,
+            minute=0,
+            second=0
+        )
+        extended_market_close_time =  now.replace(
+            hour=20,
+            minute=0,
+            second=0
+        )
+        
+        
+        if trading_extended_hour:
+            since_market_open = now - extended_market_open_time
+            since_market_open = since_market_open.total_seconds()
+            remain_market_open = extended_market_close_time - now # seconds
+            remain_market_open = remain_market_open.total_seconds()
+        else:
+            # how much the time has pass since market open
+            since_market_open = now - market_open_time # seconds
+            since_market_open = since_market_open.total_seconds()
+            # how much the time remain before market close
+            remain_market_open = market_close_time - now # seconds
+            remain_market_open = remain_market_open.total_seconds()
+            
         # if trading time
-        # start before open, stop before close
-        is_trading_running =  (since_market_open > 60*1) and (remain_market_open > 60*3) #(now >= market_open_time) and (now <= market_close_time) and (remain_market_open.seconds // seconds_per_turn > stop_before_close) and (since_market_open.seconds // seconds_per_turn >= stop_after_open)
+        # start before open, stop before close, avoid first 30 min for extended hours
+        # if trading_extended_hour:
+        #     is_trading_running =  (since_market_open > 60*30) and (remain_market_open > 60*5) #(now >= market_open_time) and (now <= market_close_time) and (remain_market_open.seconds // seconds_per_turn > stop_before_close) and (since_market_open.seconds // seconds_per_turn >= stop_after_open)
+        # else:
+        is_trading_running =  (since_market_open > 60*1) and (remain_market_open > 60*3)
 
         if is_today_tradingday and is_trading_running:
-            daily(trade_freq = trade_freq, signal_ticker='^IXIC', long_ticker=long_ticker, short_ticker=short_ticker, bp_portion=bp_portion) 
+            daily(trade_freq = trade_freq, signal_ticker=signal_ticker, long_ticker=long_ticker, short_ticker=short_ticker, bp_portion=bp_portion, trade_extended_hour=trading_extended_hour) 
         else:
             time.sleep(10)
             print(f"Sleep at {now}...Waiting for market open...\n")
