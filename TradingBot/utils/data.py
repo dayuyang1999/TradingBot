@@ -11,7 +11,7 @@ import yfinance as yf
 from .tradebot import EMA, RD, MA
 
 
-def get_data(tiker='^IXIC', start="2022-05-05", end="2022-05-06", which='Close', interval='1m'):
+def get_data(tiker='^IXIC', start="2022-05-05", end="2022-05-06", which='Close', interval='1m', premarket=False):
     '''
     get_data from yahoo finance
     
@@ -23,7 +23,7 @@ def get_data(tiker='^IXIC', start="2022-05-05", end="2022-05-06", which='Close',
         df.columns = df.columns.map(''.join)
         df = df.rename_axis('Date').reset_index()
         return df
-    data = yf.download(tickers = tiker, start=start, end=end, interval = interval, progress=False)
+    data = yf.download(tickers = tiker, start=start, end=end, interval = interval, progress=False, prepost=premarket)
     data['pct_change'] = data[which].pct_change()
     data['log_ret'] = np.log(data[which].shift(-1)) - np.log(data[which])
     data = reformulate_date(data)

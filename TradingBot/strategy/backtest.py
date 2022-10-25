@@ -19,9 +19,10 @@ import pandas as pd
 
 
 class APISettings:
-    API_KEY_ID = "your"
-    SECRET_KEY = "your"
+    API_KEY_ID = "yours"
+    SECRET_KEY = "yours"
     ENDPOINT = 'https://paper-api.alpaca.markets'
+
 
     
 
@@ -113,7 +114,7 @@ class RollingBackTest():
     
 
 class BackTest:
-    def __init__(self, test_strategy, momentum_settings, start_date, end_date, signal_ticker, long_ticker, short_ticker, data_inverval, which='Close', verbose=True, skip_morning=False):
+    def __init__(self, test_strategy, momentum_settings, start_date, end_date, signal_ticker, long_ticker, short_ticker, data_inverval, which='Open', verbose=True, premarket=False):
         '''
         date format like '2022-05-04'
         
@@ -122,9 +123,9 @@ class BackTest:
         
         '''
         # get data
-        nasdaq = get_data(tiker=signal_ticker, start=start_date, end=end_date, which=which, interval = data_inverval)
-        tqqq = get_data(tiker=long_ticker, start=start_date, end=end_date, which=which,interval = data_inverval)
-        sqqq =  get_data(tiker=short_ticker, start=start_date, end=end_date, which=which, interval = data_inverval)
+        nasdaq = get_data(tiker=signal_ticker, start=start_date, end=end_date, which=which, interval = data_inverval, premarket=premarket)
+        tqqq = get_data(tiker=long_ticker, start=start_date, end=end_date, which=which,interval = data_inverval, premarket=premarket)
+        sqqq =  get_data(tiker=short_ticker, start=start_date, end=end_date, which=which, interval = data_inverval, premarket=premarket)
         # remove the last row, since the last row sometimes contains the latest datapoint (Bug of yfinance)
         nasdaq = nasdaq[:-1]
         tqqq = tqqq[:-1]
@@ -160,7 +161,7 @@ class BackTest:
         
         # get signal
         if test_strategy == 'momentum':
-            self.momentum = Momentum(self.signal_df, momentum_settings, verbose, skip_morning)
+            self.momentum = Momentum(self.signal_df, momentum_settings, verbose)
         
         # converting signal to vector 
         self.signal_df = self.momentum.signal_df # update
@@ -202,7 +203,7 @@ class BackTest:
         
         yfi_data['time'] = yfi_data.apply(lambda row: convert_time(row), axis=1)
         yfi_data.rename(columns={'Open':'price'}, inplace=True)
-        return yfi_data[['time', 'price']]
+        return yfi_data[['time', 'price', 'pct_change']]
     
 
     def convert_time(self, yfi_data):
@@ -399,7 +400,7 @@ class BackTest_Doublemomentum:
         
         yfi_data['time'] = yfi_data.apply(lambda row: convert_time(row), axis=1)
         yfi_data.rename(columns={'Open':'price'}, inplace=True)
-        return yfi_data[['time', 'price']]
+        return yfi_data[['time', 'price', 'pct_change']]
     
 
         

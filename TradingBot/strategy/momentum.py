@@ -1,3 +1,4 @@
+#from webbrowser import MacOSX
 from .__main__ import Strategy
 from array import array
 from .computation import dif, ema
@@ -8,18 +9,24 @@ import numpy as np
 from datetime import datetime, timedelta
 from pytz import timezone
 
+from distfit import distfit
+
 class Momentum_settings:
     '''
+    Intro:
+        - An example of momentum settings
     if you found it is more likely to enter "long stage"
         - you should set higher threshold for short, but lower threshold for long
     '''
-    long_buy_thres = 0
+    long_buy_thres = 0 # percentage * 100
     long_sell_thres = 0
-    short_buy_thres = 6
-    short_sell_thres = 6
-    ema_smooth_factor = 5 # long-term indicator as ema smooth factor
+    short_buy_thres = 0
+    short_sell_thres = 0
+    slow_smooth_factor = 5 # long-term indicator as ema smooth factor
     # if larger, slower track of current price, more consistent
-    dif_smooth_factor = 2 # price smooth factor for computing momentum
+    fast_smooth_factor = 2
+    #fast_smooth_factor = 2 # price smooth factor for computing momentum
+    
     
     
     
@@ -28,7 +35,7 @@ class Momentum(Strategy):
     '''
     ema enhanced momentum strategy
     '''
-    def __init__(self, signal_df, momemtum_settings, verbose=False, only_morning=False):
+    def __init__(self, signal_df, momemtum_settings, verbose=False):
         '''
         Purpose:
             input data, output signal(long? short? empty?) to the corresponding **time period** 
@@ -47,36 +54,52 @@ class Momentum(Strategy):
         '''
         
         super().__init__('momentum')
-        self.only_morning = only_morning
+        self.time_restrictive = False
         self.signal_df = signal_df
         self.momemtum_settings = momemtum_settings
         self.verbose = verbose
-        #self.signal_df['pydate'] = signal_df.apply(lambda row: self.convert_time(row, 'Date'), axis=1)
-        #self.long_asset_prices = long_asset_df['Close'].values
         
         ####### main process
         # create long term indicator
         self.signal_df['ema']  = self.long_term_momentum()
         # create short term momentum 
-        differentials = self.compute_momentum(self.momemtum_settings.dif_smooth_factor)
-        self.signal_df['dif'] = np.nan
-        self.signal_df['dif'][1:] = differentials
+        
+        self.compute_momentum(self.momemtum_settings.fast_smooth_factor) ## will add new col: smoothed_pct_change
+
+        
         # create signal
-        self.signal_df['signal'] = signal_df.apply(lambda row: self.create_signal_row(row), axis=1)
+        self.create_signal() # will add one more column into signal_df['signal']
+       
         
         if verbose:
             self.plot_strategy()
             
- 
+
+    def obtain_stat_filer_boundary(self, thres, sig_values):
+        '''
+        sig_values: array
+        '''
+        dist = distfit(alpha=(1-thres)/2, smooth=4)
+
+        dist.fit_transform(sig_values, verbose=0)
+        # dist.plot(sig, figsize=(10, 3))
+        # # Search for best theoretical fit on your empirical data
+
+        # plt.figure(figsize=(10, 3))
+        # plt.plot(sig)
+        # plt.axhline(dist.model['CII_min_alpha'], linestyle='--', c='r', label='CII low')
+        # plt.axhline(dist.model['CII_max_alpha'], linestyle='--', c='r', label='CII high')
+        return dist.model['CII_min_alpha'], dist.model['CII_max_alpha']
     
     def plot_strategy(self):
 
 
         figure_size  = (20, 10)
         fig, ax = plt.subplots(figsize=figure_size)
+
         ax.plot(self.signal_df['price'], label="signal price")
         #if emas != None:
-        ax.plot(self.signal_df['ema'], label=f'ema{self.momemtum_settings.ema_smooth_factor} of signal price')
+        ax.plot(self.signal_df['ema'], label=f'ema{self.momemtum_settings.slow_smooth_factor} of signal price')
         # print long
         ax.vlines(x= np.array(self.signal_df[self.signal_df['signal'] == 'long'].index), 
                   ymin=np.min(self.signal_df['price']), 
@@ -96,32 +119,7 @@ class Momentum(Strategy):
         nyc = timezone('America/New_York')
         return row[colname].to_pydatetime().astimezone(nyc)
     
-    def create_signal_row(self, row):
-        price = row['price']
-        dif = row['dif']
-        ema = row['ema']
-        time = row['time']
-        
-        if self.only_morning == False:
-            if dif == np.nan:
-                return 'empty'
-            else:
-                if dif > self.momemtum_settings.long_buy_thres and price > ema: # long
-                    return 'long'
-                elif dif < -self.momemtum_settings.short_buy_thres and price < ema:
-                    return 'short'
-                else:
-                    return 'empty'
-        else:
-            if dif == np.nan:
-                return 'empty'
-            else:
-                if dif > self.momemtum_settings.long_buy_thres and price > ema and int(time.strftime('%H')) < 10: # long
-                    return 'long'
-                elif dif < -self.momemtum_settings.short_buy_thres and price < ema and int(time.strftime('%H')) < 10:
-                    return 'short'
-                else:
-                    return 'empty'
+
             
             
 
@@ -131,7 +129,7 @@ class Momentum(Strategy):
         '''
         use ema20 as default for minites trade
         '''
-        return ema(self.signal_df['price'], self.momemtum_settings.ema_smooth_factor)
+        return ema(self.signal_df['price'], self.momemtum_settings.slow_smooth_factor)
     
     
     def compute_momentum(self, dif_sf, focal_row_nums=[]):
@@ -142,9 +140,15 @@ class Momentum(Strategy):
             - 1st differential is related to the abosolute index value
             - so divided by index value  / self.prices[-1]
         '''
-        ma_dif = dif(ema(self.signal_df['price'], dif_sf)) 
-        assert len(ma_dif) == self.signal_df.shape[0] - 1
+        #self.signal_df['smoothed_dif'] = self.signal_df['price'].diff().ewm(span=self.momemtum_settings.fast_smooth_factor, min_periods=self.momemtum_settings.fast_smooth_factor).mean()
+        self.signal_df['smoothed_pct_change'] = self.signal_df['pct_change'].ewm(span=self.momemtum_settings.fast_smooth_factor, min_periods=1).mean()
         
+        
+        ma_dif = np.nan_to_num(self.signal_df['smoothed_pct_change'].values, nan=0)
+        #assert len(dif_ma) == self.signal_df.shape[0] - 1
+        
+        # self.buy_lower_thres, self.buy_upper_thres = self.obtain_filer_boundary(self.momemtum_settings.buy_thres, ma_dif)
+        # self.sell_lower_thres, self.sell_upper_thres = self.obtain_filer_boundary(self.momemtum_settings.sell_thres, ma_dif)
 
         if self.verbose:
             
@@ -164,113 +168,206 @@ class Momentum(Strategy):
             #assert dif.shape[0] == ori_data.shape[0] == ma_dif.shape[0]
             for focal_row_num in focal_row_nums:
                 ax.vlines(ymin=np.min(ma_dif), ymax=np.max(ma_dif), x=focal_row_num, color='r', linestyle='-.')
-            ax.plot(ma_dif, label="MA of delta price: denoised(smoothed) divergence")
+        
+            ax.axhline(self.momemtum_settings.long_buy_thres/100, linestyle='--', c='g', label='buy long thres')
+            ax.axhline(-self.momemtum_settings.short_buy_thres/100, linestyle='--', c='g', label='buy short thres')
+            ax.plot(ma_dif, label=f"MA {self.momemtum_settings.fast_smooth_factor} of percentage change: denoised(smoothed) divergence")
+
             #ax.plot(ema_ema, label="EMA of EMA")
             #ax.plot(macd, label="macd")
             ax.legend()
         
-        return ma_dif
         
-        
-        
-    
 
+
+    def create_signal(self):
+        '''
+        dependes on previous states
+        '''
         
-        
-        
-### old
-                
-    
-    # def create_signal(self):
-        
-        
-    #     # no data for first differential for 1st data point
-    #     emas = self.long_term_indicator
-    #     prices = self.signal_df['Close'].values[1:]
-    #     times = self.signal_df['pydate'].values[1:]
-    #     emas = emas[1:]
-        
-    #     # create signal
-    #     delta_diver = self.differentials
-    #     long = []
-    #     short = []
-    #     empty = []
-    #     for i, value in enumerate(delta_diver):
+        # no data for first differential for 1st data point
+
+        signal_col = []
+        prev_price = 0
+        for i, row in self.signal_df.iterrows():
+            price = row['price']
+            pct_change = row['smoothed_pct_change']
+            ema = row['ema']
+            time = row['time']
             
-    #         if i==0: # when time =0, only consider when to buy
-    #             if value > self.momemtum_settings.long_buy_thres: # buy long 
-    #                 long.append(1)
-    #                 short.append(0)
-    #                 empty.append(0)
-    #             elif value < - self.momemtum_settings.short_buy_thres: # buy short
-    #                 long.append(0)
-    #                 short.append(1)
-    #                 empty.append(0)
-    #             else:
-    #                 long.append(0)
-    #                 short.append(0)
-    #                 empty.append(1)
-    #         else: # when time >0, obtain prev status and consider current operation
-    #             if long[i-1] == 1: # if prev hold long, consider when to sell long
-    #                 if value < self.momemtum_settings.long_sell_thres: # if <= long_sell_thres, sell
-    #                     if value < - self.momemtum_settings.short_buy_thres: # if buy short instead? < -thres
-    #                         long.append(0)
-    #                         short.append(1)
-    #                         empty.append(0)
-    #                     else:
-    #                         long.append(0)
-    #                         short.append(0)
-    #                         empty.append(1)   
-    #                 else: # continue to hold
-    #                     long.append(1)
-    #                     short.append(0)
-    #                     empty.append(0)
-                        
-    #             elif short[i-1] == 1: # if prev hold short
-    #                 if value > - self.momemtum_settings.short_sell_thres: # sell short
-    #                     if value > self.momemtum_settings.long_buy_thres: # buy long instead?
-    #                         long.append(1)
-    #                         short.append(0)
-    #                         empty.append(0)
-    #                     else:
-    #                         long.append(0)
-    #                         short.append(0)
-    #                         empty.append(1)
-    #                 else: # continue to hold
-    #                     long.append(0)
-    #                     short.append(1)
-    #                     empty.append(0)
+            if i != 0:
+                previous_state = signal_col[i-1]
+     
+            else:
+                previous_state = 'empty'
+            
+            
+            if not self.time_restrictive:
+                if dif == np.nan: 
+                    cur_sig = 'empty'
+                else:
+                    if previous_state != 'empty': # hold in prev state
+                        if previous_state == 'short': # if prev short
+                            if (pct_change*100 > self.momemtum_settings.long_buy_thres) and (price > ema):
+                                cur_sig = 'long' # reverse
+                            elif pct_change*100 > - self.momemtum_settings.short_sell_thres: # -1 > -2
+                                cur_sig = 'empty'
+                            else:
+                                cur_sig = previous_state
+                        elif previous_state == 'long':
+                            if (pct_change*100 < - self.momemtum_settings.short_buy_thres) and (price < ema): # reverse
+                                cur_sig = 'short'
+                            elif pct_change*100 < self.momemtum_settings.long_sell_thres: # sell
+                                cur_sig = 'empty'
+                            else:
+                                cur_sig = previous_state
+                    
+                    else: # prev is empty
+                        if (pct_change*100 > self.momemtum_settings.long_buy_thres) and (price > ema): # large enough to long
+                            cur_sig = 'long'
+                        elif (pct_change*100 < - self.momemtum_settings.short_buy_thres) and (price < ema):
+                            cur_sig = 'short'
+                        else:
+                            cur_sig = 'empty'
+                    
+            else:
+                pass
                 
-    #             elif empty[i-1] == 1: # prev did not hold anything
-    #                 if value > self.momemtum_settings.long_buy_thres:
-    #                     long.append(1)
-    #                     short.append(0)
-    #                     empty.append(0)
-    #                 elif value < - self.momemtum_settings.short_buy_thres:
-    #                         long.append(0)
-    #                         short.append(1)
-    #                         empty.append(0)
-    #                 else:
-    #                     long.append(0)
-    #                     short.append(0)
-    #                     empty.append(1)
+                
+            
+            
+            ### updates
+            signal_col.append(cur_sig)
+        
+        assert len(signal_col) == self.signal_df.shape[0]
+        
+        self.signal_df['signal'] = signal_col
+        
+        
+                    
+                    
+                
+    # decreciated
+            
+        
+    # def create_signal_row(self, row):
+    #     '''
+    #     if not depends on previous states
+    #     '''
+    #     price = row['price']
+    #     pct_change = row['smoothed_pct_change']
+    #     ema = row['ema']
+    #     time = row['time']
+        
+    #     if self.only_morning == False:
+    #         if dif == np.nan:
+    #             return 'empty'
+    #         else:
+    #             if dif > self.buy_upper_thres and price > ema: # long
+    #                 return 'long'
+    #             elif dif < - self.buy_lower_thres and price < ema:
+    #                 return 'short'
+    #             else:
+    #                 return 'empty'
+    #     else:
+    #         if dif == np.nan:
+    #             return 'empty'
+    #         else:
+    #             if dif > self.upper_thres and price > ema and int(time.strftime('%H')) < 10: # long
+    #                 return 'long'
+    #             elif dif < -self.lower_thres and price < ema and int(time.strftime('%H')) < 10:
+    #                 return 'short'
+    #             else:
+    #                 return 'empty'
+    
+    # def  create_signal_row(self, row):
+            
+        # emas = self.long_term_indicator
+        # prices = self.signal_df['Close'].values[1:]
+        # times = self.signal_df['pydate'].values[1:]
+        # emas = emas[1:]
+        
+        # # create signal
+        # delta_diver = self.differentials
+        # long = []
+        # short = []
+        # empty = []
+        # for i, value in enumerate(delta_diver):
+            
+        #     if i==0: # when time =0, only consider when to buy
+        #         if value > self.upper_thres: # buy long 
+        #             long.append(1)
+        #             short.append(0)
+        #             empty.append(0)
+        #         elif value < - self.momemtum_settings.short_buy_thres: # buy short
+        #             long.append(0)
+        #             short.append(1)
+        #             empty.append(0)
+        #         else:
+        #             long.append(0)
+        #             short.append(0)
+        #             empty.append(1)
+        #     else: # when time >0, obtain prev status and consider current operation
+        #         if long[i-1] == 1: # if prev hold long, consider when to sell long
+        #             if value < self.momemtum_settings.long_sell_thres: # if <= long_sell_thres, sell
+        #                 if value < - self.momemtum_settings.short_buy_thres: # if buy short instead? < -thres
+        #                     long.append(0)
+        #                     short.append(1)
+        #                     empty.append(0)
+        #                 else:
+        #                     long.append(0)
+        #                     short.append(0)
+        #                     empty.append(1)   
+        #             else: # continue to hold
+        #                 long.append(1)
+        #                 short.append(0)
+        #                 empty.append(0)
+                        
+        #         elif short[i-1] == 1: # if prev hold short
+        #             if value > - self.momemtum_settings.short_sell_thres: # sell short
+        #                 if value > self.upper_thres: # buy long instead?
+        #                     long.append(1)
+        #                     short.append(0)
+        #                     empty.append(0)
+        #                 else:
+        #                     long.append(0)
+        #                     short.append(0)
+        #                     empty.append(1)
+        #             else: # continue to hold
+        #                 long.append(0)
+        #                 short.append(1)
+        #                 empty.append(0)
+                
+        #         elif empty[i-1] == 1: # prev did not hold anything
+        #             if value > self.upper_thres:
+        #                 long.append(1)
+        #                 short.append(0)
+        #                 empty.append(0)
+        #             elif value < - self.lower_thres:
+        #                     long.append(0)
+        #                     short.append(1)
+        #                     empty.append(0)
+        #             else:
+        #                 long.append(0)
+        #                 short.append(0)
+        #                 empty.append(1)
 
-    #         if emas[i] > prices[i]: # go down trend
-    #             if long[i] == 1:
-    #                 long[i] = 0
-    #                 empty[i]=1
-    #         elif emas[i] <= prices[i]:
-    #             if short[i] == 1:
-    #                 short[i] = 0
-    #                 empty[i]=1
+        #     if emas[i] > prices[i]: # go down trend
+        #         if long[i] == 1:
+        #             long[i] = 0
+        #             empty[i]=1
+        #     elif emas[i] <= prices[i]:
+        #         if short[i] == 1:
+        #             short[i] = 0
+        #             empty[i]=1
                              
                 
         
-    #     assert len(prices) == len(emas) == len(long)
-    #     for long_, short_, empty_ in zip(long, short, empty):
-    #         assert ((long_ + short_ + empty_) == 1)
+        # assert len(prices) == len(emas) == len(long)
+        # for long_, short_, empty_ in zip(long, short, empty):
+        #     assert ((long_ + short_ + empty_) == 1)
 
-    #     signals = {'long':long, 'short':short, 'empty':empty, 'signal_time':times}
+        # signals = {'long':long, 'short':short, 'empty':empty, 'signal_time':times}
         
         
         
